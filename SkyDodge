@@ -1,0 +1,326 @@
+from kivymd.app import MDApp
+from kivymd.uix.label import MDLabel
+
+import pygame
+import random
+import sys
+
+# Initialize Pygame
+pygame.init()
+pygame.font.init()
+
+# Set the display mode to full screen
+WIN = pygame.display.set_mode((1080, 720), pygame.FULLSCREEN)
+WIDTH, HEIGHT = WIN.get_size()
+pygame.display.set_caption("Space Dodge")
+
+# Load images and sounds
+BACKGROUND_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge/beach-sunset-cartoon-scenery-background-free-vector.jpg"), (WIDTH, HEIGHT))
+PLAY_BUTTON_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge\R-removebg-preview.png"), (200, 100))
+QUIT_BUTTON_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge/177-1779763_file-gtk-quit-svg-button-quit-png-clipart-removebg-preview.png"), (100, 50))
+BACK_BUTTON_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge/202-2022801_transparent-back-button-clipart-arrow-clip-art-hd-removebg-preview.png"), (100, 50))
+PAUSE_BUTTON_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge\Pause-removebg-preview.png"), (50, 50))
+RESUME_BUTTON_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge\Pause-removebg-preview.png"), (50, 50))
+FIGHTER_JET_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge/rafael-kametani-nave-1-128p-recuperado-removebg-preview.png"), (90, 75))
+BULLET_IMAGE = pygame.Surface((10, 10))
+pygame.draw.circle(BULLET_IMAGE, (255, 255, 255), (5, 5), 5)
+HUNTER_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge\F-15-Fighter-Jet-removebg-preview.png"), (60, 30))
+HEART_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge\OIP-removebg-preview.png"), (30, 30))
+BULLET_SOUND = pygame.mixer.Sound("E:\Space Dodge\laser-gun-81720.mp3")
+LEFT_BUTTON_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge\left-arrow-button-direction-114549-removebg-preview.png"), (50, 50))
+RIGHT_BUTTON_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge\OIP__1_-removebg-preview.png"), (50, 50))
+AIM_BUTTON_IMAGE = pygame.transform.scale(pygame.image.load("E:\Space Dodge\OIP__2_-removebg-preview.png"), (100, 100))
+
+# Define classes
+class Triangle:
+    def __init__(self, x, y, width, height, image):
+        self.x, self.y, self.width, self.height, self.image = x, y, width, height, image
+        self.vel = 5
+        self.image_width, self.image_height = image.get_width(), image.get_height()
+        self.hitbox = pygame.Rect(x, y, self.image_width, self.image_height)
+        self.move_left_flag = False
+        self.move_right_flag = False
+        self.sliding_threshold = 30  # Threshold for sliding gesture detection
+        self.slide_direction = None
+        self.slide_start_pos = None
+
+    def draw(self, win):
+        win.blit(self.image, (self.x, self.y))
+        self.hitbox = pygame.Rect(self.x, self.y, self.image_width, self.image_height)
+
+    def move_left(self):
+        if self.x > 0:
+            self.x -= self.vel
+
+    def move_right(self):
+        if self.x + self.image_width < WIDTH:
+            self.x += self.vel
+
+    def handle_movement(self):
+        if self.move_left_flag:
+            self.move_left()
+        if self.move_right_flag:
+            self.move_right()
+        if self.slide_direction == "left":
+            self.move_left()
+        elif self.slide_direction == "right":
+            self.move_right()
+
+    def shoot(self):
+        BULLET_SOUND.play()
+        return [
+            Bullet(self.x + self.image_width // 2, self.y, BULLET_IMAGE, 10),
+            Bullet(self.x, self.y + self.image_height, BULLET_IMAGE, 10),
+            Bullet(self.x + self.image_width, self.y + self.image_height, BULLET_IMAGE, 10)
+        ]
+
+    def detect_slide(self, touch_pos):
+        if self.slide_start_pos is None:
+            self.slide_start_pos = touch_pos
+        else:
+            delta_x = touch_pos[0] - self.slide_start_pos[0]
+            if abs(delta_x) >= self.sliding_threshold:
+                self.slide_direction = "right" if delta_x > 0 else "left"
+                self.slide_start_pos = None
+
+    def reset_slide(self):
+        self.slide_direction = None
+        self.slide_start_pos = None
+
+
+class Bullet:
+    def __init__(self, x, y, image, vel):
+        self.x, self.y, self.image, self.vel = x, y, image, vel
+
+    def draw(self, win):
+        win.blit(self.image, (self.x, self.y))
+
+    def move(self):
+        self.y -= self.vel
+
+
+class Hunter:
+    def __init__(self, x, y, image, vel):
+        self.x, self.y, self.image, self.vel, self.hitbox = x, y, image, vel, pygame.Rect(x, y, 60, 30)
+
+    def draw(self, win):
+        win.blit(self.image, (self.x, self.y))
+        self.hitbox = pygame.Rect(self.x, self.y, 60, 30)
+
+    def move(self):
+        self.y += self.vel
+
+
+def draw_button(image, pos):
+    rect = image.get_rect(topleft=pos)
+    WIN.blit(image, rect)
+    return rect
+
+
+def format_time(ms):
+    minutes = ms // 60000
+    seconds = (ms % 60000) // 1000
+    return "{:02}:{:02}".format(minutes, seconds)
+
+
+def draw_window(triangle, hunters, bullets, game_over, score, score_increase, time_remaining, lives, paused):
+    WIN.blit(BACKGROUND_IMAGE, (0, 0))
+    if not game_over:
+        if triangle:
+            triangle.draw(WIN)
+        for hunter in hunters: hunter.draw(WIN)
+        for bullet in bullets: bullet.draw(WIN)
+        font = pygame.font.SysFont("comicsans", 30)
+        score_text = font.render("Score: " + str(score), 1, (255, 255, 255))
+        WIN.blit(score_text, (10, 10))
+        if score_increase:
+            score_increase_text = font.render("+1", 1, (0, 255, 0))
+            WIN.blit(score_increase_text, (10, 50))
+        draw_button(QUIT_BUTTON_IMAGE, (WIDTH - 120, 10))
+        draw_button(BACK_BUTTON_IMAGE, (WIDTH - 120, 70))
+        draw_button(PAUSE_BUTTON_IMAGE, (WIDTH - 120, 130))
+        time_text = font.render("Time: " + format_time(time_remaining), 1, (255, 255, 255))
+        time_text_rect = time_text.get_rect(center=(WIDTH // 2, 50))
+        WIN.blit(time_text, time_text_rect)
+        for i in range(lives):
+            WIN.blit(HEART_IMAGE, (WIDTH - 50 - i * 40, HEIGHT - 50))
+        draw_button(LEFT_BUTTON_IMAGE, (50, HEIGHT // 2 - 25))
+        draw_button(RIGHT_BUTTON_IMAGE, (WIDTH - 100, HEIGHT // 2 - 25))
+        draw_button(AIM_BUTTON_IMAGE, (WIDTH - 1100, HEIGHT - 500))
+
+    else:
+        font = pygame.font.SysFont("comicsans", 100)
+        text = font.render("Game Over", 1, (255, 0, 0))
+        WIN.blit(text, (WIDTH / 2 - text.get_width() / 2, HEIGHT / 2 - text.get_height() / 2))
+        font = pygame.font.SysFont("comicsans", 50)
+        retry_text = font.render("Click anywhere to retry", 1, (255, 255, 255))
+        WIN.blit(retry_text, (WIDTH / 2 - retry_text.get_width() / 2, HEIGHT / 2))
+
+    if paused:
+        font = pygame.font.SysFont("comicsans", 50)
+        paused_text = font.render("Paused", 1, (255, 255, 255))
+        WIN.blit(paused_text, (WIDTH / 2 - paused_text.get_width() / 2, HEIGHT / 2 - paused_text.get_height() / 2))
+        resume_text = font.render("Click anywhere to resume", 1, (255, 255, 255))
+        WIN.blit(resume_text, (WIDTH / 2 - resume_text.get_width() / 2, HEIGHT / 2 + 100))
+    pygame.display.update()
+
+
+def welcome_screen(score_history):
+    while True:
+        WIN.blit(BACKGROUND_IMAGE, (0, 0))
+        draw_button(PLAY_BUTTON_IMAGE, (WIDTH // 2 - 100, HEIGHT // 2 - 50))
+        draw_button(QUIT_BUTTON_IMAGE, (WIDTH - 120, 10))
+        draw_button(BACK_BUTTON_IMAGE, (WIDTH - 120, 70))
+        font = pygame.font.SysFont("comicsans", 30)
+        WIN.blit(font.render("Score History:", 1, (255, 255, 255)), (10, HEIGHT - 100))
+        for i, score in enumerate(score_history):
+            WIN.blit(font.render(f"{i + 1}. {score}", 1, (255, 255, 255)), (10, HEIGHT - 60 + i * 30))
+        pygame.display.update()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN or (event.type == pygame.FINGERDOWN and event.button == 1):
+                touch_pos = pygame.mouse.get_pos() if event.type == pygame.MOUSEBUTTONDOWN else event.pos
+                if WIDTH // 2 - 100 <= touch_pos[0] <= WIDTH // 2 + 100 and HEIGHT // 2 - 50 <= touch_pos[1] <= HEIGHT // 2 + 50:
+                    return "play"
+                elif draw_button(QUIT_BUTTON_IMAGE, (WIDTH - 120, 10)).collidepoint(touch_pos):
+                    pygame.quit()
+                    sys.exit()
+                elif draw_button(BACK_BUTTON_IMAGE, (WIDTH - 120, 70)).collidepoint(touch_pos):
+                    continue
+
+
+def pause_game():
+    paused = True
+    while paused:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            elif event.type == pygame.MOUSEBUTTONDOWN or (event.type == pygame.FINGERDOWN and event.button == 1):
+                paused = False
+        draw_window(None, [], [], False, 0, False, 0, 0, paused)
+
+
+def main(score_history):
+    triangle_width, triangle_height = 50, 50
+    triangle = Triangle((WIDTH - triangle_width) // 2, HEIGHT - triangle_height, triangle_width, triangle_height, FIGHTER_JET_IMAGE)
+    hunters = []
+    spawn_timer, spawn_interval, bullet_timer, bullets, score = 0, 1000, 0, [], 0
+    run, clock, game_over, paused = True, pygame.time.Clock(), False, False
+    start_time = pygame.time.get_ticks()
+    lives = 3
+    shooting = False
+
+    while run:
+        clock.tick(60)
+        if not game_over and not paused:
+            time_passed = pygame.time.get_ticks() - start_time
+            time_remaining = max(0, 5 * 60 * 1000 - time_passed)
+            if time_remaining == 0:
+                game_over = True
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    run = False
+                elif event.type == pygame.MOUSEBUTTONDOWN or (event.type == pygame.FINGERDOWN and event.button == 1):
+                    touch_pos = pygame.mouse.get_pos() if event.type == pygame.MOUSEBUTTONDOWN else event.pos
+                    if draw_button(QUIT_BUTTON_IMAGE, (WIDTH - 120, 10)).collidepoint(touch_pos):
+                        pygame.quit()
+                        sys.exit()
+                    elif draw_button(BACK_BUTTON_IMAGE, (WIDTH - 120, 70)).collidepoint(touch_pos):
+                        return "back"
+                    elif draw_button(PAUSE_BUTTON_IMAGE, (WIDTH - 120, 130)).collidepoint(touch_pos):
+                        pause_game()
+                    elif draw_button(LEFT_BUTTON_IMAGE, (50, HEIGHT // 2 - 25)).collidepoint(touch_pos):
+                        triangle.move_left_flag = True
+                    elif draw_button(RIGHT_BUTTON_IMAGE, (WIDTH - 100, HEIGHT // 2 - 25)).collidepoint(touch_pos):
+                        triangle.move_right_flag = True
+                    elif draw_button(AIM_BUTTON_IMAGE, (WIDTH - 1100, HEIGHT - 500)).collidepoint(touch_pos):
+                        shooting = True
+                    else:
+                        triangle.detect_slide(touch_pos)
+                elif event.type == pygame.MOUSEBUTTONUP or (event.type == pygame.FINGERUP and event.button == 1):
+                    triangle.move_left_flag = False
+                    triangle.move_right_flag = False
+                    triangle.reset_slide()
+                elif event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_w:
+                        shooting = True
+                    elif event.key == pygame.K_LEFT:
+                        triangle.move_left_flag = True
+                    elif event.key == pygame.K_RIGHT:
+                        triangle.move_right_flag = True
+                elif event.type == pygame.KEYUP:
+                    if event.key == pygame.K_w:
+                        shooting = False
+                    elif event.key == pygame.K_LEFT:
+                        triangle.move_left_flag = False
+                    elif event.key == pygame.K_RIGHT:
+                        triangle.move_right_flag = False
+                elif event.type == pygame.FINGERDOWN:
+                    touch_x, touch_y = event.pos
+                    if draw_button(LEFT_BUTTON_IMAGE, (1050, HEIGHT // 2 - 25)).collidepoint((touch_x, touch_y)):
+                        triangle.move_left_flag = True
+                    elif draw_button(RIGHT_BUTTON_IMAGE, (WIDTH - 100, HEIGHT // 2 - 25)).collidepoint((touch_x, touch_y)):
+                        triangle.move_right_flag = True
+
+                elif event.type == pygame.FINGERUP:
+                    triangle.move_left_flag = False
+                    triangle.move_right_flag = False
+
+            triangle.handle_movement()
+
+            if shooting:
+                if pygame.time.get_ticks() - bullet_timer > 300:
+                    bullets.extend(triangle.shoot())
+                    bullet_timer = pygame.time.get_ticks()
+
+            if pygame.time.get_ticks() - spawn_timer > spawn_interval:
+                fighter_jet_x = random.randrange(0, WIDTH - 60)
+                fighter_jet_y = random.randrange(-HEIGHT, 0)
+                hunters.append(Hunter(fighter_jet_x, fighter_jet_y, HUNTER_IMAGE, random.randint(1, 4)))
+                spawn_timer = pygame.time.get_ticks()
+
+            for hunter in hunters:
+                hunter.move()
+                if hunter.y > HEIGHT:
+                    hunters.remove(hunter)
+                if triangle.hitbox.colliderect(hunter.hitbox):
+                    lives -= 1
+                    if lives == 0:
+                        game_over = True
+                    hunters.remove(hunter)
+
+            for bullet in bullets[:]:
+                bullet.move()
+                if bullet.y < 0:
+                    bullets.remove(bullet)
+                else:
+                    for hunter in hunters[:]:
+                        if bullet.x > hunter.x and bullet.x < hunter.x + hunter.hitbox.width and bullet.y > hunter.y and bullet.y < hunter.y + hunter.hitbox.height:
+                            bullets.remove(bullet)
+                            hunters.remove(hunter)
+                            score += 1
+                            break
+
+        else:
+            score_history.append(score)
+            for event in pygame.event.get():
+                if event.type == pygame.MOUSEBUTTONDOWN or (event.type == pygame.FINGERDOWN and event.button == 1):
+                    return "retry"
+
+        draw_window(triangle, hunters, bullets, game_over, score, False, time_remaining, lives, paused)
+
+    pygame.quit()
+
+
+if __name__ == "__main__":
+    score_history = []
+    while True:
+        result = welcome_screen(score_history)
+        if result == "play":
+            result = main(score_history)
+        elif result == "back":
+            continue
